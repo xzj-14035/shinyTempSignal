@@ -19,6 +19,7 @@
 #' @importFrom treeio merge_tree
 #' @importFrom treeio rescale_tree
 #' @importFrom treeio tree_subset
+#' @importFrom ape extract.clade
 #' @importFrom treeio read.phylip.tree
 #' @importFrom forecast forecast
 #' @importFrom stats cor
@@ -34,8 +35,11 @@
 #' @importFrom stats as.formula
 #' @importFrom ggpmisc stat_poly_eq
 #' @importFrom utils read.csv
+#' @importFrom utils write.csv
 #' @noRd
+
 app_server <- function( input, output, session )  {
+  options(shiny.maxRequestSize = 4000*1024^2)
   category <- ..eq.label.. <- ..rr.label.. <- NULL
   observeEvent(input$plotClick, {
     tree <- tree()
@@ -71,7 +75,7 @@ app_server <- function( input, output, session )  {
         if (as.numeric(input$node)<length(as.phylo(tree)$tip.label)) {
           stop("it is a tip label")
         }else{
-          tree <- tree_subset(tree,as.numeric(input$node),levels_back = 0)
+          tree <- extract.clade(tree,node = as.numeric(input$node))#tree_subset(tree,as.numeric(input$node),levels_back = 0)
         }
       }
       return(tree)
@@ -353,7 +357,7 @@ app_server <- function( input, output, session )  {
     
     for (i in a:b) {
       f=i-a+1
-      sub.tree[[f]] <- tree_subset(tree = tree,node = i,levels_back = 0)
+      sub.tree[[f]] <- extract.clade(tree,node = i)
       date[[f]] <- dateType3(sub.tree[[f]],pattern = input$regression) %>% dateNumeric(format = input$format) 
       divergence[[f]] <- getdivergence(tree = sub.tree[[f]])
       df_td[[f]] <- as.data.frame(cbind(date=date[[f]],divergence=divergence[[f]]))
@@ -410,10 +414,10 @@ app_server <- function( input, output, session )  {
   })
   
   existing_data <-reactive({
-    date <- date()
+    date <- date() %>% as.numeric()
     divergence <- divergence()
     label <- label()
-    df <- data.frame(label=label,divergence=divergence,date=date)
+    df <- data.frame(label=label,divergence=divergence,date=date %>% as.numeric())
     
     return(df)
   })
@@ -536,7 +540,7 @@ app_server <- function( input, output, session )  {
     modele <- list()
     for (i in a:b) {
       f=i-a+1
-      sub.tree[[f]] <- tree_subset(tree = tree,node = i,levels_back = 0)
+      sub.tree[[f]] <- extract.clade(tree,node = i)
       divergence[[f]] <- getdivergence(tree = sub.tree[[f]])
       label[[f]] <-sub.tree[[f]]$tip.label
       df_td1[[f]] <- data.frame(label=label[[f]],divergence=divergence[[f]])
@@ -592,3 +596,4 @@ app_server <- function( input, output, session )  {
   )
   
 }
+
