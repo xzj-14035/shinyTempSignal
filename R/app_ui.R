@@ -18,15 +18,14 @@ app_ui <- function(request) {
                      choiceNames = list("Newick","beast","NEXUS","phylip"),
                      choiceValues = list("Newick","beast","NEXUS","phylip")),
         fileInput("treefile","choose your tree file (necessary)"),
-        #tags$h4("This file is ",tags$strong("not necessary"),"."),
-        fileInput("outdata","choose your corresponding external data(not necessary)"),
         textInput("regression","a regrular expression to match your date"),
         selectInput("format", 
                     "Dates format:", 
                     c("yy", "yyyy", "yyyy-MM-dd", "MM-dd-yyyy", 
                       "yyyy/MM/dd", "yyyy.MM.dd", "MM/dd/yyyy", 
                       "MM.dd.yyyy")),
-        
+        #tags$h4("This file is ",tags$strong("not necessary"),"."),
+        fileInput("outdata","choose your corresponding external data(not necessary)"),
         actionButton("fileinput","submit"),
         sidebarMenu(
           menuItem("Sample Dates", tabName="Dates"),
