@@ -18,7 +18,6 @@
 #' @importFrom treeio read.codeml
 #' @importFrom treeio merge_tree
 #' @importFrom treeio rescale_tree
-#' @importFrom treeio tree_subset
 #' @importFrom ape extract.clade
 #' @importFrom treeio read.phylip.tree
 #' @importFrom forecast forecast
@@ -193,7 +192,8 @@ app_server <- function( input, output, session )  {
     if (input$tip) {
       p <- ggtree(tree,color=input$color3, size=input$size) + geom_tiplab()+geom_nodelab(aes(label=node),hjust=-.3)
       p%<+%all+ geom_tippoint(aes(shape=category,color=category))+
-        geom_tiplab(aes(color=category))
+        geom_tiplab(aes(color=category))+
+        scale_color_manual(values = c("up" = "red", "down" = "blue"))
     }else{
       p <- ggtree(tree,color=input$color3, size=input$size)+geom_nodelab(aes(label=node),hjust=-.3)
       p}
@@ -302,7 +302,8 @@ app_server <- function( input, output, session )  {
       if (input$tip) {
         p <- ggtree(tree,color=input$color3, size=input$size) + geom_tiplab()+geom_nodelab(aes(label=node),hjust=-.3)
         p%<+%all+ geom_tippoint(aes(shape=category,color=category))+
-          geom_tiplab(aes(color=category))
+          geom_tiplab(aes(color=category))+
+          scale_color_manual(values = c("up" = "red", "down" = "blue"))
       }else{
         p <- ggtree(tree,color=input$color3, size=input$size)+geom_nodelab(aes(label=node),hjust=-.3)
         p}
