@@ -37,17 +37,9 @@
 #' @importFrom utils write.csv
 #' @noRd
 
-app_server <- function( input, output, session )  {
+app_server <- function(input, output, session)  {
   options(shiny.maxRequestSize = 4000*1024^2)
   category <- ..eq.label.. <- ..rr.label.. <- NULL
-  observeEvent(input$plotClick, {
-    tree <- tree()
-    p <- ggtree(tree)
-    x <- as.numeric(input$plotClick$x)
-    y <- as.numeric(input$plotClick$y)
-    node <- click_node(x, y, p$data)
-    updateTextInput(session,"node",value = node)
-  })
   click_node <- function(x, y, tr) {
     sq_dx <- (x - tr$x)^2
     sq_dy <- (y - tr$y)^2
@@ -55,317 +47,305 @@ app_server <- function( input, output, session )  {
     node <- tr$node[i]
     return(node)
   }
+
+  observeEvent(input$plotClick, {
+    p <- reactive(ggtree(tree()))
+    x <- reactive(as.numeric(input$plotClick$x))
+    y <- reactive(as.numeric(input$plotClick$y))
+    node <- reactive(click_node(x(), y(), p()$data) |> as.character())
+    updateTextInput(session,"node",value = node())
+  })
+
+  observeEvent(input$node, {
+    req(input$node != "")
+    tree2plot <- reactive(extract.clade(tree(), node = as.numeric(input$node)))
+    output$plot1 <- renderPlot({
+    if (input$tip) {
+      p <- reactive(ggtree(tree2plot(),color=input$color3, size=input$size) + geom_tiplab()+geom_nodelab(aes(label=node),hjust=-.3))
+      if (!is.null(all_data())) {
+        p()%<+%all_data() + geom_tippoint(aes(shape=category,color=category))+
+          geom_tiplab(aes(color=category))+
+          scale_color_manual(values = c("up" = "red", "down" = "blue"))
+      } else {
+        p()
+      }
+    } else {
+      ggtree(tree2plot(),color=input$color3, size=input$size)+geom_nodelab(aes(label=node),hjust=-.3)
+    }
+    }, height = reactive(input$height))})
+
   #1.读入树文件
   tree <- reactive({
-    infile <- input$treefile
-    if (!is.null(infile)) {
-      if (input$filetype=="Newick") {
-        tree <- read.tree(infile$datapath) %>% as.phylo()
-      } else if (input$filetype=="beast") {
-        tree <- read.beast(infile$datapath) %>% as.phylo()
-      } else if (input$filetype=="Nexus") {
-        tree <- read.nexus(infile$datapath)
-      } else if (input$filetype=="phylip") {
-        tree <- read.phylip.tree(infile$datapath) %>% as.phylo()
-      }
-      
-      if (input$node != "") {
-        
-        if (as.numeric(input$node)<length(as.phylo(tree)$tip.label)) {
-          stop("it is a tip label")
-        }else{
-          tree <- extract.clade(tree,node = as.numeric(input$node))#tree_subset(tree,as.numeric(input$node),levels_back = 0)
-        }
-      }
-      return(tree)
-    } else {
-      return(NULL)
+    req(input$treefile)
+    if (input$filetype=="Newick") {
+      tree <- read.tree(input$treefile$datapath) %>% as.phylo()
+    } else if (input$filetype=="beast") {
+      tree <- read.beast(input$treefile$datapath) %>% as.phylo()
+    } else if (input$filetype=="Nexus") {
+      tree <- read.nexus(input$treefile$datapath)
+    } else if (input$filetype=="phylip") {
+      tree <- read.phylip.tree(input$treefile$datapath) %>% as.phylo()
     }
   })
-  #全部在外面取出来不就好了
-  data <- reactive({
-    tree <- tree()
-    if (!is.null(tree)){
-      tree <- tree %>% as.phylo()
-      date <-dateType3(tree = tree,pattern = input$regression)
-      date <- dateNumeric(date = date,format = input$format)
-      divergence <- getdivergence(tree = tree)
-      df <- cbind(label=tree$tip.label,date=date,divergence=divergence)
-      return(df)
-    }else{
-      return(NULL)
-    }
-    
-  })
+#      if (as.numeric(input$node)<length(as.phylo(tree)$tip.label)) {
+#      stop("it is a tip label")
+#    }
+  # initilize tree data
   date <- reactive({
-    tree <- tree()
-    if (!is.null(tree)){
-      tree <- tree %>% as.phylo()
-      date <-dateType3(tree = tree,pattern = input$regression)
-      date <- dateNumeric(date = date,format = input$format)
-      return(date)
-    }else{
-      return(NULL)
-    }
+    req(tree())
+    dateType3(tree = tree(), pattern = input$regression) |>
+      dateNumeric(format = input$format)
   })
-  label <-reactive({
-    tree <- tree()
-    if (!is.null(tree)){
-      tree <- tree %>% as.phylo()
-      label <-tree$tip.label
-      return(label)
-    }else{
-      return(NULL)
-    }
-  }) 
-  
   divergence <- reactive({
-    tree <- tree()
-    if (!is.null(tree)){
-      divergence <- getdivergence(tree = tree)
-      return(divergence)
-    }else{
-      return(NULL)
-    }
-  })
-  height <- reactive({
-    return(input$height)
-  })
-  estimate <- function(df,p){lm=lm(df$divergence~ df$date)
-  rst <- rstudent(lm)
-  down <- 0.5-abs(0.5-pt(rst,lm$df.residual))< p / 2&rst<0
-  up <- 0.5-abs(0.5-pt(rst,lm$df.residual))< p/ 2&rst>0
-  return(list(down=down,up=up))}
-  
-  
-  
-  
-  up.table <- reactive({
-    df <- data()
-    if (!is.null(df)) {
-      pd <- estimate(df,p=input$pvalue)
-      up.table <- df[pd$up,,drop=F]
-      up.table$category <- rep("up",nrow(up.table))
-      return(up.table)
-    }else{return(NULL)}
-  })
+    req(tree())
+    getdivergence(tree = tree())})
+  label <- reactive({as.phylo(tree())$tip.label})
+  df <- reactive(data.frame(label=label(),
+    date=date(),divergence=divergence()
+  ))
+  # prepare up.table
+  pd <- reactive({
+    req(df())
+    estimate(df(),p=input$pvalue)})
+  up.table <- reactive(
+    {req(df()); temp <- df()[pd()$up,,drop=F]; temp$category <- rep("up", times = length(pd()$up)); temp})
+#  up.table()$category <- reactive({req(up.table()); rep("up",nrow(up.table()))})
+  # prepare down.table
   down.table <- reactive({
-    df <- data()
-    if (!is.null(df)) {
-      pd <- estimate(df,p=input$pvalue)
-      down.table <- df[pd$down,,drop=F]
-      down.table$category <- rep("down",nrow(down.table))
-      return(down.table)
-    }else{return(NULL)}
+    req(pd() & pd())
+    temp <- df()[pd()$down,,drop=F]
+    temp$category <- rep("down", times = length(pd()$down))
+    temp
+  })
+#  down.table()$category <- reactive({req(down.table()); rep("down",nrow(down.table()))})
+  d <- reactive({req(up.table() & down.table()); rbind(up.table(), down.table())})
+  # prepare keep.table
+  keep <- reactive({req(pd()); pd()$up==pd()$down})
+  keep.table <- reactive({req(df() & keep()); df()[keep(),,drop=F]})
+  # prepare exclude.table
+  keep <- reactive({req(pd()); pd()$up==pd()$down})
+  exclude.table <- reactive({req(df() & keep()); df()[!keep(),,drop=F]})
+  # prepare all
+  all_data <- reactive({req(d() & df()); merge(d(), df(), by = "label", all = T)})
+
+  regression <- reactive({
+    req(input$regression_btn)
+    lm(as.formula(paste(input$y_var, "~", input$x_var)), all_data())
+  })
+  a <- reactive({req(tree()); length(tree()$tip.label) + 1})
+  b <- reactive({req(tree()); length(tree()$tip.label) + tree()$Nnode})
+  table2 <- reactive({
+    req(a() & b())
+    generate_dataframe(a = a(), b = b(),
+      tree = tree(), regression = regression(), format = input$format
+  )})
+
+  data2 <- reactive({
+    req(input$outdata)
+    read.csv(input$outdata$datapath)
   })
   
-  keep.table <- reactive({
-    df <- data()
-    if (!is.null(df)) {
-      pd <- estimate(df,p=input$pvalue)
-      keep <- pd$up==pd$down
-      keep.table <- df[keep,,drop=F]
-      return(keep.table)
-    }else{return(NULL)}
+  merged_df <- reactive({
+    req(data2())
+    # 将上传的表格与现有的表格合并
+    merge(df(), data2()) %>% unique() %>% na.omit()
   })
-  exclude.table <- reactive({
-    df <- data()
-    if (!is.null(df)) {
-      pd <- estimate(df,p=input$pvalue)
-      keep <- pd$up==pd$down
-      exclude.table <- df[!keep,,drop=F]
-      return(exclude.table)
-    }else{return(NULL)}
+
+  estimate2 <- function(lm,p){
+    rst <- rstudent(lm)
+    down <- 0.5-abs(0.5-pt(rst,lm$df.residual))< p / 2&rst<0
+    up <- 0.5-abs(0.5-pt(rst,lm$df.residual))< p/ 2&rst>0
+    return(list(down=down,up=up))}
+
+  need.df <- reactive({
+    req(input$x_var & input$y_var)
+    merged_df()[,c("label",input$x_var,input$y_var)]}
+  )
+  regression2 <- reactive({
+    req(input$regression_btn)
+    lm(as.formula(paste(input$y_var, "~", input$x_var)), need.df())
   })
-  
-  
+  need.pd <- reactive({
+    req(regression2() & input$pvalue)
+    estimate2(lm=regression2(),p=input$pvalue)}
+  )
+  need.up.table <- reactive({
+    req(need.df() & pd())
+    temp <- need.df()[need.pd()$up,,drop=F]
+    temp$category <- rep("up", times = length(need.pd()$up))
+    temp
+  })
+  need.down.table <- reactive({
+    req(need.pd() & need.df())
+    temp <- need.df()[need.pd()$down, , drop = F]
+    temp$category <- rep("down", times = length(need.pd()$down))
+    temp
+  })
+  need.keep <- reactive({
+    req(need.pd())
+    need.pd()$up == need.pd()$down
+  })
+  need.keep.table <- reactive({
+    req(need.df() & need.keep())
+    need.df()[need.keep(), , drop = F]
+  })
+  need.exclude.table <- reactive({
+    req(need.df() & need.keep())
+    need.df()[!need.keep(), , drop = F]}
+  )
+  table3 <- reactive({
+    req(a() & b() & regression2() & tree())
+    generate_dataframe(tree = tree(), regression = regression2(),
+      a = a(), b = b(), format = input$format)
+})
+
+
+
+
+
+  #全部在外面取出来不就好了
+  estimate <- function(df,p) {
+    lm=lm(df$divergence~ df$date)
+    rst <- rstudent(lm)
+    down <- 0.5-abs(0.5-pt(rst,lm$df.residual))< p / 2&rst<0
+    up <- 0.5-abs(0.5-pt(rst,lm$df.residual))< p/ 2&rst>0
+    return(list(down=down,up=up))
+  }
+
   output$plot1 <- renderPlot({
-    tree <- tree()
-    if (is.null(tree)) {
-      return(NULL)
-    }
-    df <- data()
-    up.table <- up.table()
-    down.table <- down.table()
-    d <- rbind(up.table,down.table)
-    all <- merge(d,df,by='label',all = T)
+    all <- reactive(merge(d(), df(),by='label',all = T))
     if (input$tip) {
-      p <- ggtree(tree,color=input$color3, size=input$size) + geom_tiplab()+geom_nodelab(aes(label=node),hjust=-.3)
-      p%<+%all+ geom_tippoint(aes(shape=category,color=category))+
+      p <- reactive(ggtree(tree(),color=input$color3, size=input$size) + geom_tiplab()+geom_nodelab(aes(label=node),hjust=-.3))
+      p()%<+%all_data()+ geom_tippoint(aes(shape=category,color=category))+
         geom_tiplab(aes(color=category))+
         scale_color_manual(values = c("up" = "red", "down" = "blue"))
     }else{
-      p <- ggtree(tree,color=input$color3, size=input$size)+geom_nodelab(aes(label=node),hjust=-.3)
-      p}
-    
-    
-  },height = height)
+      ggtree(tree(),color=input$color3, size=input$size)+geom_nodelab(aes(label=node),hjust=-.3)
+    }
+    }, height = reactive(input$height))
   #2.取出日期
   output$datetable <- renderDataTable({
-    tree <- tree()
-    if (is.null(tree)) {
-      return()
-    }
-    tree <- tree %>% as.phylo()
-    date <-dateType3(tree = tree,pattern = input$regression)
-    divergence <- getdivergence(tree = tree)
-    df <- cbind(label=tree$tip.label,date=date,divergence=divergence)
-    table1(df)
-    df
-  })
-  table1 <- reactiveVal()
+    data.frame(label=label(),
+        date=date(),divergence=divergence()
+    )})
+
+
+
   output$download1 <- downloadHandler(
     filename = function(){
       "Sample-Dates.csv"
     },
     content = function(file){
-      df <- table1()
-      write.csv(df,file,row.names = FALSE)
+      write.csv(df(),file,row.names = FALSE)
     }
   )
   
   #3.取出divergence，回归分析
   output$plot2 <- renderPlot({
-    tree <- tree()
-    if (is.null(tree)) {
-      return()
-    }
-    df <- data()
-    up.table <- up.table()
-    down.table <- down.table()
-    ggplot(df, aes(x = date, y = divergence)) +
+    ggplot(df(), aes(x = date, y = divergence)) +
       geom_point() +
       geom_smooth(method = "lm", se = FALSE, formula = y ~ x,colour=input$color2) +
-      geom_point(data = down.table, aes(x = date, y = divergence), color = 'blue') +
-      geom_point(data = up.table,aes(x = date, y = divergence), color ="red")+
+      geom_point(data = down.table(), aes(x = date, y = divergence), color = 'blue') +
+      geom_point(data = up.table(),aes(x = date, y = divergence), color ="red")+
       # geom_text(data = d, aes(x = date, y = divergence, label = label)) +
       theme_bw() +
       stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), parse = TRUE)
   })
   output$outliers <- renderDataTable({
-    up.table <- up.table()
-    down.table <- down.table()
-    rbind(up.table,down.table)
+    rbind(up.table(), down.table())
   })
   observeEvent(input$delete,{
     output$plot2 <- renderPlot({
-      exclude.table <- exclude.table()
-      keep.table <- keep.table()
-      ggplot(keep.table, aes(x = date, y = divergence)) +
+      ggplot(keep.table(), aes(x = date, y = divergence)) +
         geom_point() +
         geom_smooth(method = "lm", se = FALSE, formula = y ~ x,colour=input$color2) +
-        geom_point(data = exclude.table, aes(x = date, y = divergence), color = 'gray') +
+        geom_point(data = exclude.table(), aes(x = date, y = divergence), color = 'gray') +
         # geom_text(data = d, aes(x = date, y = divergence, label = label)) +
         theme_bw() +
         stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), parse = TRUE)
     })
     output$plot3 <- renderPlot({
-      need.exclude.table <- need.exclude.table()
-      keep.table <- need.keep.table()
-      ggplot(keep.table, aes_string(x = input$x_var, y = input$y_var)) +
+      ggplot(keep.table(), aes_string(x = input$x_var, y = input$y_var)) +
         geom_point() +
         geom_smooth(method = "lm", se = FALSE, formula = y ~ x,colour=input$color2) +
-        geom_point(data = need.exclude.table, aes_string(x = input$x_var, y = input$y_var), color = 'gray') +
+        geom_point(data = exclude.table(), aes_string(x = input$x_var, y = input$y_var), color = 'gray') +
         # geom_text(data = d, aes(x = date, y = divergence, label = label)) +
         theme_bw() +
         stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), parse = TRUE)
     })
-    
     print("here do delete")
     output$plot1 <- renderPlot({
-      tree <- tree()
-      up.table <- up.table()
-      down.table <- down.table()
-      to_drop <- c(down.table$label,up.table$label)
-      tip_reduced <- drop.tip(tree, to_drop)
+      bowser()
+      to_drop <- reactive(c(down.table()$label,up.table()$label))
+      tip_reduced <- reactive(drop.tip(tree(), to_drop()))
       if (input$tip) {
-        ggtree(tip_reduced) + geom_tiplab()+geom_nodelab(aes(label=node),hjust = -.3)
+        ggtree(tip_reduced()) + geom_tiplab()+geom_nodelab(aes(label=node()),hjust = -.3)
       }else{
-        ggtree(tip_reduced)+geom_nodelab(aes(label=node),hjust = -.3)
+        ggtree(tip_reduced()) + geom_nodelab(aes(label=node()),hjust = -.3)
       }
-      
-    },height = height)
-    
-    
+    }, height = reactive(input$height))
   })
   observeEvent(input$reset,{
     output$plot1 <- renderPlot({
-      tree <- tree()
-      if (is.null(tree)) {
-        return()
-      }
-      df <- data()
-      up.table <- up.table()
-      down.table <- down.table()
-      d <- rbind(up.table,down.table)
-      all <- merge(d,df,by='label',all = T)
       if (input$tip) {
-        p <- ggtree(tree,color=input$color3, size=input$size) + geom_tiplab()+geom_nodelab(aes(label=node),hjust=-.3)
-        p%<+%all+ geom_tippoint(aes(shape=category,color=category))+
+        p <- ggtree(tree(),color=input$color3, size=input$size) + geom_tiplab()+geom_nodelab(aes(label=node),hjust=-.3)
+        p%<+%all_data()+ geom_tippoint(aes(shape=category,color=category))+
           geom_tiplab(aes(color=category))+
           scale_color_manual(values = c("up" = "red", "down" = "blue"))
       }else{
-        p <- ggtree(tree,color=input$color3, size=input$size)+geom_nodelab(aes(label=node),hjust=-.3)
-        p}
-    },height = height)
+        ggtree(tree(),color=input$color3, size=input$size)+geom_nodelab(aes(label=node),hjust=-.3)
+      }
+    }, height = reactive(input$height))
     
     output$plot2 <- renderPlot({
-      df <- data()
-      up.table <- up.table()
-      down.table <- down.table()
-      ggplot(df, aes(x = date, y = divergence)) +
+      ggplot(df(), aes(x = date, y = divergence)) +
         geom_point() +
         geom_smooth(method = "lm", se = FALSE, formula = y ~ x,colour=input$color2) +
-        geom_point(data = down.table, aes(x = date, y = divergence), color = 'blue') +
-        geom_point(data = up.table,aes(x = date, y = divergence), color ="red")+
+        geom_point(data = down.table(), aes(x = date, y = divergence), color = 'blue') +
+        geom_point(data = up.table(),aes(x = date, y = divergence), color ="red")+
         # geom_text(data = d, aes(x = date, y = divergence, label = label)) +
         theme_bw() +
         stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), parse = TRUE)
     })
     output$plot3 <- renderPlot({
-      df1 <- merged_data()
-      df <- df1[,c("label",input$x_var,input$y_var)]
-      need.up.table <- need.up.table()
-      need.down.table <- need.down.table()
-      ggplot(df, aes_string(x = input$x_var, y =input$y_var)) +
-        geom_point() +
-        geom_smooth(method = "lm", se = FALSE, formula = y ~ x,colour=input$color2) +
-        geom_point(data = need.down.table, aes_string(x = input$x_var, y =input$y_var), color = 'blue') +
-        geom_point(data = need.up.table,aes_string(x = input$x_var, y =input$y_var), color ="red")+
+      if(is.null(merged_df())) {
+        ggplot(df(), aes_string(x = input$x_var, y =input$y_var)) +
+          geom_point() +
+          geom_smooth(method = "lm", se = FALSE, formula = y ~ x,colour=input$color2) +
+          geom_point(data = need.down.table(), aes_string(x = input$x_var, y =input$y_var), color = 'blue') +
+          geom_point(data = need.up.table(),aes_string(x = input$x_var, y =input$y_var), color ="red")+
+          # geom_text(data = d, aes(x = date, y = divergence, label = label)) +
+          theme_bw() +
+          stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), parse = TRUE)
+      } else {
+        ggplot(merged_df(), aes_string(x = input$x_var, y =input$y_var)) +
+          geom_point() +
+          geom_smooth(method = "lm", se = FALSE, formula = y ~ x,colour=input$color2) +
+          geom_point(data = need.down.table(), aes_string(x = input$x_var, y =input$y_var), color = 'blue') +
+          geom_point(data = need.up.table(),aes_string(x = input$x_var, y =input$y_var), color ="red")+
         # geom_text(data = d, aes(x = date, y = divergence, label = label)) +
         theme_bw() +
         stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), parse = TRUE)
+      }
     })
     print("here do reset")
-    
   })
   
-  output$dataframe <- renderDataTable({
-    tree <- tree()
-    if (is.null(tree)) {
-      return(NULL)
-    }
-    tree <- tree%>%as.phylo()
-    #1 set parameters needed
-    a = length(tree$tip.label) + 1
-    b = length(tree$tip.label) + tree$Nnode
-    sub.tree <- list()
-    date <- list()
-    divergence <- list()
-    df_td = list()
-    model.results <- list()
-    modele <- list()
-    
+  generate_dataframe <- function(a, b, tree, regression, format) {
+    sub.tree <- vector(mode = "list", length = length(a - b + 1))
+    date <- vector(mode = "list", length = length(a - b + 1))
+    divergence <- vector(mode = "list", length = length(a - b + 1))
+    df_td <- vector(mode = "list", length = length(a - b + 1))
+    model.results <- vector(mode = "list", length = length(a - b + 1))
     for (i in a:b) {
       f=i-a+1
       sub.tree[[f]] <- extract.clade(tree,node = i)
-      date[[f]] <- dateType3(sub.tree[[f]],pattern = input$regression) %>% dateNumeric(format = input$format) 
+      date[[f]] <- dateType3(sub.tree[[f]],pattern = regression) %>% dateNumeric(format = format) 
       divergence[[f]] <- getdivergence(tree = sub.tree[[f]])
       df_td[[f]] <- as.data.frame(cbind(date=date[[f]],divergence=divergence[[f]]))
-      model.results[[f]] <- if (unique(is.na(divergence[[f]]))) {
-        NA
+      if (unique(is.na(divergence[[f]]))) {
+        model.results[[f]] <- NA
       } else{
-        
         m <- lm(divergence ~ date, data = df_td[[f]])
         rst <- rstudent(m)
         upval <- c((0.5 - abs(pt(
@@ -378,7 +358,7 @@ app_server <- function( input, output, session )  {
         < input$pvalue / 2 & rst < 0)
         modele <-
           summary(lm(divergence ~ date, data = df_td[[f]]))
-        data.frame(
+        model.results[[f]] <- data.frame(
           node = i,
           tip.number=Ntip(sub.tree[[f]]),
           r.squared = modele$r.squared,
@@ -393,206 +373,59 @@ app_server <- function( input, output, session )  {
         )
       }}
     df <- na.omit(do.call(rbind, model.results))
-    dd <- df[order(df$total_abnormal, decreasing = T), ]
-    table2(dd)
-    dd
+    df[order(df$total_abnormal, decreasing = T), ]
+  }
+
+  output$dataframe <- renderDataTable({
+    table2()
   })
- table2 <- reactiveVal()
-  
-  output$ download2.table <- downloadHandler(
-    filename = function(){
-      "Subtree_regression_intergration.csv"
-    },
+
+  output$download2.table <- downloadHandler(
+    filename = "Subtree_regression_intergration.csv",
     content = function(file){
-      df <- table2()
-      write.csv(df,file,row.names = FALSE)
+      write.csv(table2(), file, row.names = FALSE)
     }
   )
   
-  data2 <- reactive({
-    req(input$outdata)
-    read.csv(input$outdata$datapath)
-  })
-  
-  existing_data <-reactive({
-    date <- date() %>% as.numeric()
-    divergence <- divergence()
-    label <- label()
-    df <- data.frame(label=label,divergence=divergence,date=date %>% as.numeric())
-    
-    return(df)
-  })
-  
-  merged_data <- reactive({
-    req(data2())
-    # 将上传的表格与现有的表格合并
-    if (!is.null(data2())) {
-      existing_data <- existing_data()
-      merged <- merge(existing_data, data2()) %>%unique() %>% na.omit()
-      merged
-    } else {
-      
-    }
-  })
-  observeEvent(merged_data(), {
-    updateSelectInput(session, "x_var", choices = colnames(merged_data()))
-    updateSelectInput(session, "y_var", choices = colnames(merged_data()))
+
+  observeEvent(merged_df(), {
+    updateSelectInput(session, "x_var", choices = colnames(merged_df()))
+    updateSelectInput(session, "y_var", choices = colnames(merged_df()))
   })
   
   output$data_table <- renderDataTable({
-    req(merged_data())
-    merged_data()
+    req(merged_df())
+    merged_df()
   })
-  regression <- reactive({
-    req(input$regression_btn)
-    lm(as.formula(paste(input$y_var, "~", input$x_var)), merged_data())
-  })
-  estimate2 <- function(lm,p){
-    rst <- rstudent(lm)
-    down <- 0.5-abs(0.5-pt(rst,lm$df.residual))< p / 2&rst<0
-    up <- 0.5-abs(0.5-pt(rst,lm$df.residual))< p/ 2&rst>0
-    return(list(down=down,up=up))}
-  need.up.table <- reactive({
-    df1 <- merged_data()
-    df <- df1[,c("label",input$x_var,input$y_var)]
-    if (!is.null(df)) {
-      lm=regression()
-      pd <- estimate2(lm=lm,p=input$pvalue)
-      up.table <- df[pd$up,,drop=F]
-      up.table$category <- rep("up",nrow(up.table))
-      return(up.table)
-    }else{return(NULL)}
-  })
-  
-  need.down.table <- reactive({
-    df1 <- merged_data()
-    df <- df1[,c("label",input$x_var,input$y_var)]
-    if (!is.null(df)) {
-      lm=regression()
-      pd <- estimate2(lm=lm,p=input$pvalue)
-      up.table <- df[pd$down,,drop=F]
-      up.table$category <- rep("down",nrow(up.table))
-      return(up.table)
-    }else{return(NULL)}
-  })
-  need.keep.table <- reactive({
-    df1 <- merged_data()
-    df <- df1[,c("label",input$x_var,input$y_var)]
-    if (!is.null(df)) {
-      lm=regression()
-      pd <- estimate2(lm=lm,p=input$pvalue)
-      keep <- pd$up==pd$down
-      keep.table <- df[keep,,drop=F]
-      return(keep.table)
-    }else{return(NULL)}
-  })
-  need.exclude.table <- reactive({
-    df1 <- merged_data()
-    df <- df1[,c("label",input$x_var,input$y_var)]
-    if (!is.null(df)) {
-      lm=regression()
-      pd <- estimate2(lm=lm,p=input$pvalue)
-      keep <- pd$up==pd$down
-      exclude.table <- df[!keep,,drop=F]
-      return(exclude.table)
-    }else{return(NULL)}
-  })
+
   
   
   output$plot3 <- renderPlot({
-    df1 <- merged_data()
-    df <- df1[,c("label",input$x_var,input$y_var)]
-    need.up.table <- need.up.table()
-    need.down.table <- need.down.table()
-    ggplot(df, aes_string(x = input$x_var, y =input$y_var)) +
+    req(merged_df())
+    ggplot(merged_df(), aes_string(x = input$x_var, y =input$y_var)) +
       geom_point() +
       geom_smooth(method = "lm", se = FALSE, formula = y ~ x,colour=input$color2) +
-      geom_point(data = need.down.table, aes_string(x = input$x_var, y =input$y_var), color = 'blue') +
-      geom_point(data = need.up.table,aes_string(x = input$x_var, y =input$y_var), color ="red")+
+      geom_point(data = need.down.table(), aes_string(x = input$x_var, y =input$y_var), color = 'blue') +
+      geom_point(data = need.up.table(),aes_string(x = input$x_var, y =input$y_var), color ="red")+
       # geom_text(data = d, aes(x = date, y = divergence, label = label)) +
       theme_bw() +
       stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), parse = TRUE)
   })
   
   output$outliers2 <- renderDataTable({
-    need.up.table <- need.up.table()
-    need.down.table <- need.down.table()
-    rbind(need.up.table,need.down.table)
+    rbind(need.up.table(),need.down.table())
   })
   
   output$out_dataframe <- renderDataTable({
-    tree <- tree()
-    if (is.null(tree)) {
-      return(NULL)
-    }
-    if (is.null(data2())) {
-      return(NULL)
-    }
-    tree <- tree%>%as.phylo()
-    data2 <- data2()
-    a = length(tree$tip.label) + 1
-    b = length(tree$tip.label) + tree$Nnode
-    sub.tree <- list()
-    divergence <- list()
-    label <- list()
-    df_td1 = list()
-    df_td2=list()
-    model.results <- list()
-    modele <- list()
-    for (i in a:b) {
-      f=i-a+1
-      sub.tree[[f]] <- extract.clade(tree,node = i)
-      divergence[[f]] <- getdivergence(tree = sub.tree[[f]])
-      label[[f]] <-sub.tree[[f]]$tip.label
-      df_td1[[f]] <- data.frame(label=label[[f]],divergence=divergence[[f]])
-      
-      df_td2[[f]] <-if (unique(is.na(divergence[[f]]))) {
-        NA
-      }else{
-        merge(data2,df_td1[[f]]) %>% unique()
-      }
-      pd <- unique(df_td2[[f]][1]) %>% unlist() %>% as.vector()
-      model.results[[f]] <- if (is.na(pd[1])) {
-        NA
-      }else{
-        m <- lm(as.formula(paste(input$y_var, "~", input$x_var)),df_td2[[f]])
-        rst <- rstudent(m)
-        upval <- c((0.5 - abs(pt(
-          rst, m$df.residual
-        ) - 0.5))
-        < input$pvalue/ 2 & rst > 0)
-        downval <- c((0.5 - abs(pt(
-          rst, m$df.residual
-        ) - 0.5))
-        < input$pvalue / 2 & rst < 0)
-        modele <-
-          summary(lm(as.formula(paste(input$y_var, "~", input$x_var)),df_td2[[f]]))
-        data.frame(
-          node = i,
-          tip.number=Ntip(sub.tree[[f]]),
-          r.squared = modele$r.squared,
-          adj.r.squared = modele$adj.r.squared,
-          pvalue = modele$coefficients[nrow(modele$coefficients), ncol(modele$coefficients)],
-          slope = modele$coefficients[nrow(modele$coefficients), 1],
-          intercept = modele$coefficients[1, 1],
-          up = length(which(upval == T)),
-          down = length(which(downval == T)),
-          total_abnormal = length(which(upval == T)) + length(which(downval == T))
-        )
-      }}
-    df <- na.omit(do.call(rbind, model.results))
-    dd <- df[order(df$total_abnormal, decreasing = T), ]
-    table3(dd)
-    dd
+    table3()
   })
-  table3 <- reactiveVal()
+
   output$download3.table <- downloadHandler(
     filename = function(){
       "out_data__regression_intergration.csv"
     },
     content = function(file){
-      df <- table3()
-      write.csv(df,file,row.names = FALSE)
+      write.csv(table3(),file,row.names = FALSE)
     }
   )
   
