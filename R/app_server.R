@@ -49,19 +49,20 @@ app_server <- function(input, output, session)  {
   }
 
   observeEvent(input$plotClick, {
-    if (is.null(tree2plot())) {
-      p <- reactive(ggtree(tree()))
-    } else {
-      p <- reactive(ggtree(tree2plot()))
-    }
     x <- reactive(as.numeric(input$plotClick$x))
     y <- reactive(as.numeric(input$plotClick$y))
-    node <- reactive(click_node(x(), y(), p()$data) |> as.character())
-    updateTextInput(session,"node",value = node())
+    if(!is.null(click_p())) {
+      node <- reactive(click_node(x(), y(), click_p()$data) |> as.character())
+      updateTextInput(session,"node",value = node())
+    } else {
+      p <- reactive(ggtree(tree()))
+      node <- reactive(click_node(x(), y(), p()$data) |> as.character())
+      updateTextInput(session, "node",value = node())
+    }
   })
 
   observeEvent(input$node, {
-    req(input$node != "")
+    req(input$node != "" & !is.null(tree()))
     output$plot1 <- renderPlot({
     if (input$tip) {
       p <- reactive(ggtree(tree2plot(),color=input$color3, size=input$size) + geom_tiplab()+geom_nodelab(aes(label=node),hjust=-.3))
@@ -79,7 +80,7 @@ app_server <- function(input, output, session)  {
 
   #1.读入树文件
   tree <- reactive({
-    req(input$treefile)
+    req(!is.null(input$treefile))
     if (input$filetype=="Newick") {
       tree <- read.tree(input$treefile$datapath) %>% as.phylo()
     } else if (input$filetype=="beast") {
@@ -93,15 +94,30 @@ app_server <- function(input, output, session)  {
 #      if (as.numeric(input$node)<length(as.phylo(tree)$tip.label)) {
 #      stop("it is a tip label")
 #    }
-  tree2plot <- reactive(extract.clade(tree(), node = as.numeric(input$node)))
   # initilize tree data
+  tree2plot <- eventReactive(
+    input$node, {
+      req(input$node != "")
+      extract.clade(tree(), node = as.numeric(input$node))
+    }
+  )
+  click_p <- eventReactive(
+    input$plotClick, {
+      req(!is.null(tree()))
+      if(input$node == "") {
+        ggtree(tree())
+      } else {
+        ggtree(extract.clade(tree(), node = as.numeric(input$node)))
+      }
+    }
+  )
   date <- reactive({
-    req(tree())
+    req(!is.null(tree()))
     dateType3(tree = tree(), pattern = input$regression) |>
       dateNumeric(format = input$format)
   })
   divergence <- reactive({
-    req(tree())
+    req(!is.null(tree()))
     getdivergence(tree = tree())})
   label <- reactive({as.phylo(tree())$tip.label})
   df <- reactive(data.frame(label=label(),
@@ -109,37 +125,37 @@ app_server <- function(input, output, session)  {
   ))
   # prepare up.table
   pd <- reactive({
-    req(df())
+    req(!is.null(df()))
     estimate(df(),p=input$pvalue)})
   up.table <- reactive(
-    {req(df()); temp <- df()[pd()$up,,drop=F]; temp$category <- rep("up", times = length(pd()$up)); temp})
+    {req(!is.null(df())); temp <- df()[pd()$up,,drop=F]; temp$category <- rep("up", times = length(pd()$up)); temp})
 #  up.table()$category <- reactive({req(up.table()); rep("up",nrow(up.table()))})
   # prepare down.table
   down.table <- reactive({
-    req(pd() & pd())
+    req(!is.null(pd()) & !is.null(df()))
     temp <- df()[pd()$down,,drop=F]
     temp$category <- rep("down", times = length(pd()$down))
     temp
   })
 #  down.table()$category <- reactive({req(down.table()); rep("down",nrow(down.table()))})
-  d <- reactive({req(up.table() & down.table()); rbind(up.table(), down.table())})
+  d <- reactive({req(!is.null(up.table()) & !is.null(down.table())); rbind(up.table(), down.table())})
   # prepare keep.table
-  keep <- reactive({req(pd()); pd()$up==pd()$down})
-  keep.table <- reactive({req(df() & keep()); df()[keep(),,drop=F]})
+  keep <- reactive({req(!is.null(pd())); pd()$up==pd()$down})
+  keep.table <- reactive({req(!is.null(df()) & !is.null(keep())); df()[keep(),,drop=F]})
   # prepare exclude.table
-  keep <- reactive({req(pd()); pd()$up==pd()$down})
-  exclude.table <- reactive({req(df() & keep()); df()[!keep(),,drop=F]})
+  keep <- reactive({req(!is.null(pd())); pd()$up==pd()$down})
+  exclude.table <- reactive({req(!is.null(df()) & !is.null(keep())); df()[!keep(),,drop=F]})
   # prepare all
-  all_data <- reactive({req(d() & df()); merge(d(), df(), by = "label", all = T)})
+  all_data <- reactive({req(!is.null(d()) & !is.null(df())); merge(d(), df(), by = "label", all = T)})
 
   regression <- reactive({
     req(input$regression_btn)
     lm(as.formula(paste(input$y_var, "~", input$x_var)), all_data())
   })
-  a <- reactive({req(tree()); length(tree()$tip.label) + 1})
-  b <- reactive({req(tree()); length(tree()$tip.label) + tree()$Nnode})
+  a <- reactive({req(!is.null(tree())); length(tree()$tip.label) + 1})
+  b <- reactive({req(!is.null(tree())); length(tree()$tip.label) + tree()$Nnode})
   table2 <- reactive({
-    req(a() & b())
+    req(!is.null(a()) & !is.null(b()))
     generate_dataframe(a = a(), b = b(),
       tree = tree(), regression = regression(), format = input$format
   )})
@@ -150,7 +166,7 @@ app_server <- function(input, output, session)  {
   })
   
   merged_df <- reactive({
-    req(data2())
+    req(!is.null(data2()))
     # 将上传的表格与现有的表格合并
     merge(df(), data2()) %>% unique() %>% na.omit()
   })
@@ -312,7 +328,7 @@ app_server <- function(input, output, session)  {
         stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), parse = TRUE)
     })
     output$plot3 <- renderPlot({
-      if(is.null(merged_df())) {
+      if(!is.null(merged_df())) {
         ggplot(df(), aes_string(x = input$x_var, y =input$y_var)) +
           geom_point() +
           geom_smooth(method = "lm", se = FALSE, formula = y ~ x,colour=input$color2) +
