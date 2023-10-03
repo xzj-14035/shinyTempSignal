@@ -49,7 +49,11 @@ app_server <- function(input, output, session)  {
   }
 
   observeEvent(input$plotClick, {
-    p <- reactive(ggtree(tree()))
+    if (is.null(tree2plot())) {
+      p <- reactive(ggtree(tree()))
+    } else {
+      p <- reactive(ggtree(tree2plot()))
+    }
     x <- reactive(as.numeric(input$plotClick$x))
     y <- reactive(as.numeric(input$plotClick$y))
     node <- reactive(click_node(x(), y(), p()$data) |> as.character())
@@ -58,7 +62,6 @@ app_server <- function(input, output, session)  {
 
   observeEvent(input$node, {
     req(input$node != "")
-    tree2plot <- reactive(extract.clade(tree(), node = as.numeric(input$node)))
     output$plot1 <- renderPlot({
     if (input$tip) {
       p <- reactive(ggtree(tree2plot(),color=input$color3, size=input$size) + geom_tiplab()+geom_nodelab(aes(label=node),hjust=-.3))
@@ -90,6 +93,7 @@ app_server <- function(input, output, session)  {
 #      if (as.numeric(input$node)<length(as.phylo(tree)$tip.label)) {
 #      stop("it is a tip label")
 #    }
+  tree2plot <- reactive(extract.clade(tree(), node = as.numeric(input$node)))
   # initilize tree data
   date <- reactive({
     req(tree())
